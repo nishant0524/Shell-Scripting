@@ -1,0 +1,103 @@
+#!/bin/bash
+
+set -euo pipefail
+
+check_aws()
+{
+        if ! command -v aws &> /dev/null; then
+                echo "AWS is not installed!!! Install it first..." >&2
+                return 1
+        fi
+}
+
+install_aws()
+{
+        "Installing AWS CLI on Linux, Please wait..."
+
+        #download commands from AWS CLI website for Linuxl
+        curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
+        unzip awscliv2.zip
+        sudo ./aws/install --bin-dir /usr/local/bin --install-dir /usr/local/aws-cli --update
+
+        #Verfifying the installation of AWS
+        if ! aws --version; then
+                echo "Installation failed!!! Retry the installation..."
+                return 1
+        else
+                aws --version
+        fi
+
+        # clean the zip file
+        rm -rf awscliv2.zip ./aws
+}
+
+create_ec2_instance()
+{
+        local ami_id="$1"
+        local instance_type="$2"
+        local key_name="$3"
+        local subnet_id="$4"
+        local security_grp_id="$5"
+        local instance_name="$6"
+
+        # Run the AWS CLI command for creating the ec2 instance
+        instance_id=$(aws ec2 run-instances \
+                --image-id "$ami_id" \
+                --instance-type "$instance_type" \
+                --key-name "$key_name" \
+                --subnet-id "$subnet_id" \
+                --security-group-ids "$security_grp_id" \
+                --tag-specifications "ResourceType=instance,Tags=[{Key=Name,Value='"$instance_name"'}]" \
+                --query 'Instances[0].InstanceId' \
+                --output text
+        )
+
+        if [ -z instance_id ]; then
+                echo "Failed to create EC2 instance!!!" >&2
+                exit 1
+        fi
+
+        echo "Instance $instance_id creaed successfully!!"
+
+        wait_for_instance "$instance_id"
+
+}
+
+wait_for_instance()
+{
+        local instance_id="$1"
+        echo "Waiting for instance $instance_id to be in running state..."
+
+        while true; do
+                state=$(aws ec2 describe-instances --instance-ids "$instance_id" --query 'Reservations[0].Instances[0].State.Name' --output text)
+                if [ "$state" == "running" ]; then
+                        echo "Instance $instance_id is now running."
+                        break
+                fi
+                sleep 10
+        done
+
+}
+
+
+main()
+{
+        if ! check_aws; then
+                install_aws || exit 1
+        fi
+        echo "Creating EC2 instance..."
+
+        read -p "Enter the ami_id: " ami_id
+        instance_type="t3.micro"
+        read -p "Enter the key name: " key_name
+        read -p "Enter the subnet id: " subnet_id
+        read -rp "Enter secrurity group ids: " security_group_ids
+        read -p "Enter the Instance name: " instance_name
+
+        create_ec2_instance "$ami_id" "$instance_type" "$key_name" "$subnet_id" "$security_group_ids" "$instance_name"
+
+        echo "EC2 instance $instance_name creation completed."
+
+}
+
+main "$@"
